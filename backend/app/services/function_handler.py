@@ -53,7 +53,7 @@ class FunctionHandler:
             },
             "query_medical_records": {
                 "function": self.query_medical_records,
-                "description": "Query the server for the filenames of available medical records",
+                "description": "Query the server for the filenames of available medical records - only query once",
                 "parameters": {
                     "type": "object",
                     "properties": {},

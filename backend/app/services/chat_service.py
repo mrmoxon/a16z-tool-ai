@@ -18,7 +18,7 @@ class ChatService:
         self.extra_context = """
 You are a helpful assistant agent. 
 
-- You can call functions to get additional information when needed.
+- You can call functions to get additional information when needed. Don't call the same function multiple times in a row.
 - When asked to assess medical records, check the records once, then think about how to download them via another function call, and assess them with a third function call.
 - All files related to this session are stored in the session folder. You can access this folder path using the 'session_folder' variable.
 - Respond in markdown format
