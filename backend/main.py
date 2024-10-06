@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from app.api.chat import router as chat_router
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -11,6 +12,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Include the router with the correct prefix
 app.include_router(chat_router, prefix="/api")

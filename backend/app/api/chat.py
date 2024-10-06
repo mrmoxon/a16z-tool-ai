@@ -8,6 +8,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+@router.options("/chat")
+async def chat_options():
+    return {"allow": "POST"}
+
 @router.post("/chat")
 async def chat(message: ChatMessage):
     try:
@@ -19,6 +23,10 @@ async def chat(message: ChatMessage):
     except Exception as e:
         logger.error(f"Unexpected error in /chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+@router.options("/chat/{conversation_id}")
+async def chat_with_history_options(conversation_id: str):
+    return {"allow": "POST"}
 
 @router.post("/chat/{conversation_id}")
 async def chat_with_history(conversation_id: str, message: ChatMessage):

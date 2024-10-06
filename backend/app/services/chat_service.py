@@ -43,72 +43,67 @@ You are a helpful assistant. You can call functions to get additional informatio
                 logger.info(f"Sending request to OpenAI API for {'stateless chat' if conversation_id is None else f'conversation ID: {conversation_id}'}")
                 
                 full_response = ""
-                function_call = None
+                function_call_name = None
+                function_call_arguments = ""
                 async for chunk in self.stream_chat_completion(client, messages):
                     if chunk['type'] == 'content':
-                        yield chunk['data']
+                        yield json.dumps({"type": "content", "content": chunk['data']}) + "\n"
                         full_response += chunk['data']
                     elif chunk['type'] == 'function_call':
-                        function_call = chunk['data']
-                        break  # Stop streaming once we get a function call
+                        if 'name' in chunk['data']:
+                            function_call_name = chunk['data']['name']
+                            yield json.dumps({"type": "function_call", "function": function_call_name}) + "\n"
+                        if 'arguments' in chunk['data']:
+                            function_call_arguments += chunk['data']['arguments']
 
                 logger.info(f"Initial response: {full_response}")
 
-                if function_call:
-                    function_name = function_call.get("name")
-                    function_args = function_call.get("arguments", "{}")
-                    
-                    logger.info(f"Function call detected: {function_name}")
-                    logger.info(f"Function arguments: {function_args}")
+                if function_call_name:
+                    logger.info(f"Function call detected: {function_call_name}")
+                    logger.info(f"Function arguments: {function_call_arguments}")
                     try:
-                        # Ensure function_args is a complete JSON object
-                        while not function_args.endswith('}'):
+                        # Ensure we have a complete JSON object for arguments
+                        while not function_call_arguments.strip().endswith('}'):
                             async for chunk in self.stream_chat_completion(client, messages):
-                                if chunk['type'] == 'function_call':
-                                    function_args += chunk['data'].get('arguments', '')
-                                    if function_args.endswith('}'):
+                                if chunk['type'] == 'function_call' and 'arguments' in chunk['data']:
+                                    function_call_arguments += chunk['data']['arguments']
+                                    if function_call_arguments.strip().endswith('}'):
                                         break
 
-                        function_args = json.loads(function_args)
-                        function_response = await function_handler.call_function(function_name, **function_args)
+                        function_args = json.loads(function_call_arguments)
+                        function_response = await function_handler.call_function(function_call_name, **function_args)
                         logger.info(f"Function response: {function_response}")
+                        
+                        yield json.dumps({"type": "function_response", "content": function_response}) + "\n"
                         
                         messages.append({
                             "role": "function",
-                            "name": function_name,
+                            "name": function_call_name,
                             "content": function_response
                         })
                         
                         logger.info("Making second call to OpenAI API")
                         async for chunk in self.stream_chat_completion(client, messages):
                             if chunk['type'] == 'content':
-                                yield chunk['data']
+                                yield json.dumps({"type": "content", "content": chunk['data']}) + "\n"
                                 full_response += chunk['data']
                     except json.JSONDecodeError as e:
                         logger.error(f"Error parsing function arguments: {str(e)}")
-                        error_message = f"\nError parsing function arguments: {str(e)}"
-                        yield error_message
-                        full_response += error_message
+                        error_message = f"Error parsing function arguments: {str(e)}"
+                        yield json.dumps({"type": "error", "content": error_message}) + "\n"
                     except Exception as e:
                         logger.error(f"Error calling function: {str(e)}")
-                        error_message = f"\nError calling function: {str(e)}"
-                        yield error_message
-                        full_response += error_message
+                        error_message = f"Error calling function: {str(e)}"
+                        yield json.dumps({"type": "error", "content": error_message}) + "\n"
 
                 if conversation_id:
                     self.conversations[conversation_id].append({"role": "assistant", "content": full_response})
                 
                 logger.info(f"Generated response: {full_response}")
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error decoding JSON: {str(e)}")
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"HTTP error occurred: {str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+            yield json.dumps({"type": "error", "content": str(e)}) + "\n"
 
     async def stream_chat_completion(self, client, messages):
         async with client.stream(
@@ -139,11 +134,8 @@ You are a helpful assistant. You can call functions to get additional informatio
                         if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
                             delta = chunk_data["choices"][0].get("delta", {})
 
-                            if "content" in delta:
-                                content = delta["content"]
-
-                                if content is not None:
-                                    yield {"type": "content", "data": content}
+                            if "content" in delta and delta["content"] is not None:
+                                yield {"type": "content", "data": delta["content"]}
 
                             if "function_call" in delta:
                                 yield {"type": "function_call", "data": delta["function_call"]}
