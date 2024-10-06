@@ -6,6 +6,7 @@ const ChatInterface = () => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [functionCall, setFunctionCall] = useState(null);
+  const [conversationId, setConversationId] = useState(null);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -23,7 +24,11 @@ const ChatInterface = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const url = conversationId
+        ? `http://localhost:8000/api/chat/${conversationId}`
+        : 'http://localhost:8000/api/chat';
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: input }),
@@ -62,6 +67,10 @@ const ChatInterface = () => {
                 break;
               case 'error':
                 aiMessage.content += `\n\n*Error:*\n${parsedChunk.content}\n\n`;
+                break;
+              case 'conversation_id':
+                setConversationId(parsedChunk.id);
+                console.log('Conversation ID set:', parsedChunk.id);
                 break;
               default:
                 console.warn('Unknown chunk type:', parsedChunk.type);

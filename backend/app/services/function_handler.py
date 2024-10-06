@@ -3,14 +3,9 @@ import random
 import httpx
 from app.core.config import settings
 import json
-from io import BytesIO
+import os
 from PIL import Image
 import fitz  # PyMuPDF
-from pdf2image import convert_from_path
-import requests
-import tempfile
-import os
-import base64
 
 class FunctionHandler:
     def __init__(self):
@@ -55,8 +50,40 @@ class FunctionHandler:
                     "properties": {},
                     "required": []
                 }
+            },
+            "query_medical_records": {
+                "function": self.query_medical_records,
+                "description": "Query the server for the filenames of available medical records",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            "download_medical_record": {
+                "function": self.download_medical_record,
+                "description": "Download a specific medical record from the server",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_type": {"type": "string", "description": "The type of file to download (docx, pdf, image, or txt)"},
+                        "session_folder": {"type": "string", "description": "The path to the session folder"}
+                    },
+                    "required": ["file_type", "session_folder"]
+                }
+            },
+            "assess_file": {
+                "function": self.assess_file,
+                "description": "Assess the content of a file and provide a summary of its properties and contents",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "The path to the file to be assessed"},
+                        "session_folder": {"type": "string", "description": "The path to the session folder"}
+                    },
+                    "required": ["file_path", "session_folder"]
+                }
             }
-
         }
 
     def get_function_descriptions(self):
@@ -71,7 +98,11 @@ class FunctionHandler:
 
     async def call_function(self, function_name, *args, **kwargs):
         if function_name in self.functions:
-            result = await self.functions[function_name]["function"](**kwargs)
+            func = self.functions[function_name]["function"]
+            # Remove 'session_folder' from kwargs if the function doesn't expect it
+            if 'session_folder' in kwargs and 'session_folder' not in func.__code__.co_varnames:
+                del kwargs['session_folder']
+            result = await func(**kwargs)
             return str(result)  # Convert all results to strings
         else:
             raise ValueError(f"Unknown function: {function_name}")
@@ -137,5 +168,86 @@ class FunctionHandler:
                 return f"Error: {e.response.status_code} - {e.response.text}"
             except Exception as e:
                 return f"An error occurred: {str(e)}"
+
+    @staticmethod
+    async def query_medical_records():
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get('http://localhost:5000/get_sample_data')
+                response.raise_for_status()
+                return json.dumps(response.json(), indent=2)
+            except httpx.HTTPStatusError as e:
+                return f"Error: {e.response.status_code} - {e.response.text}"
+            except Exception as e:
+                return f"An error occurred: {str(e)}"
+
+    @staticmethod
+    async def download_medical_record(file_type: str, session_folder: str):
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(f'http://localhost:5000/download/{file_type}')
+                response.raise_for_status()
+                
+                file_name = f"medical_record.{file_type}"
+                file_path = os.path.join(session_folder, file_name)
+                
+                with open(file_path, 'wb') as f:
+                    f.write(response.content)
+
+                return f"File downloaded successfully. Path: {file_path}"
+            except httpx.HTTPStatusError as e:
+                return f"Error: {e.response.status_code} - {e.response.text}"
+            except Exception as e:
+                return f"An error occurred: {str(e)}"
+
+    @staticmethod
+    async def assess_file(file_path: str, session_folder: str):
+        full_path = os.path.join(session_folder, file_path)
+        if not os.path.exists(full_path):
+            return f"Error: File not found at {full_path}"
+
+        file_size = os.path.getsize(full_path)
+        file_ext = os.path.splitext(full_path)[1].lower()
+
+        assessment = f"File: {os.path.basename(full_path)}\n"
+        assessment += f"File size: {file_size} bytes\n"
+        assessment += f"File type: {file_ext}\n\n"
+
+        if file_ext == '.pdf':
+            try:
+                with fitz.open(full_path) as doc:
+                    assessment += f"PDF file with {len(doc)} pages.\n"
+                    toc = doc.get_toc()
+                    if toc:
+                        assessment += "Table of Contents:\n"
+                        for item in toc[:5]:  # Show first 5 ToC items
+                            assessment += f"- {' '.join(map(str, item))}\n"
+                        if len(toc) > 5:
+                            assessment += f"... and {len(toc) - 5} more items\n"
+            except Exception as e:
+                assessment += f"Unable to analyze PDF structure: {str(e)}\n"
+
+        elif file_ext == '.docx':
+            assessment += "DOCX file. Detailed analysis would require additional libraries.\n"
+
+        elif file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+            try:
+                with Image.open(full_path) as img:
+                    assessment += f"Image file. Dimensions: {img.size[0]}x{img.size[1]} pixels. Mode: {img.mode}.\n"
+            except Exception as e:
+                assessment += f"Unable to analyze image: {str(e)}\n"
+
+        elif file_ext == '.txt':
+            with open(full_path, 'r', encoding='utf-8') as text_file:
+                text_content = text_file.read()
+            line_count = text_content.count('\n') + 1
+            word_count = len(text_content.split())
+            assessment += f"Text file containing approximately {line_count} lines and {word_count} words.\n"
+            assessment += f"First 100 characters: {text_content[:100]}...\n"
+
+        else:
+            assessment += f"This file has an unrecognized file type: {file_ext}\n"
+
+        return assessment
 
 function_handler = FunctionHandler()
